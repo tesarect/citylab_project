@@ -11,6 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -25,7 +26,12 @@ if(BUILD_TESTING)
 endif()
 
 add_executable(patrol_bot_node src/patrol.cpp)
-ament_target_dependencies(patrol_bot_node rclcpp nav_msgs std_msgs sensor_msgs)
+ament_target_dependencies(patrol_bot_node 
+	rclcpp 
+	nav_msgs 
+	std_msgs 
+	sensor_msgs 
+	geometry_msgs)
 
 # Install
 install(TARGETS

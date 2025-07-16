@@ -4,7 +4,9 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/subscription_base.hpp"
 #include "rclcpp/utilities.hpp"
+#include <chrono>
 #include <geometry_msgs/msg/twist.hpp>
+#include <limits>
 #include <memory>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
@@ -35,33 +37,47 @@ private:
   void laser_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
     // Get 180° front rays
     size_t total = msg->ranges.size();
-    size_t front_start = total / 4;
-    size_t front_end = 3 * total / 4;
+    size_t front_start = total / 4;   // Skip right 90 degree
+    size_t front_end = 3 * total / 4; // Skip left 90 degree
 
     // Find max distance in front 180° (excluding inf values)
     float max_distance = 0.0;
     size_t max_index = front_start;
 
-    // RCLCPP_INFO(
-    //     this->get_logger(),
-    //     "front_start : %zu | front_end : %zu | total : %zu | max_index : %zu",
-    //     front_start, front_end, total, max_index);
+    // Find min distance in front area (for obstacle detection)
+    float min_front_distance = std::numeric_limits<float>::max();
 
     for (size_t i = front_start; i < front_end; i++) {
-      // Check if range is valid (not inf and not nan)
+      // Check for minimum distance (obstacle detection)
+      if (std::isfinite(msg->ranges[i]) &&
+          msg->ranges[i] < min_front_distance) {
+        min_front_distance = msg->ranges[i];
+      }
+
+      // Check for maximum distance (safest direction)
       if (std::isfinite(msg->ranges[i]) && msg->ranges[i] > max_distance) {
         max_distance = msg->ranges[i];
         max_index = i;
       }
     }
 
-    // Calculate angle of the safest direction
-    float angle_increment = msg->angle_increment;
-    float angle_min = msg->angle_min;
-    float safest_angle = angle_min + (max_index * angle_increment);
+    // // Calculate angle of the safest direction
+    // float angle_increment = msg->angle_increment;
+    // float angle_min = msg->angle_min;
+    // float safest_angle = angle_min + (max_index * angle_increment);
 
-    // Store in class variable
-    direction_ = safest_angle;
+    // // Store in class variable
+    // direction_ = safest_angle;
+
+    // Obstacle avoidance logic
+    if (min_front_distance < 0.35) {
+      // Use safest direction - calculate angle
+      float angle_increment = msg->angle_increment;
+      float angle_min = msg->angle_min;
+      direction_ = angle_min + (max_index * angle_increment);
+    } else {
+      direction_ = 0.0; // Go straight
+    }
 
     // Debug output
     RCLCPP_INFO(this->get_logger(),
@@ -77,6 +93,9 @@ private:
     cmd.angular.z = direction_ / 2;
 
     cmd_vel_pub->publish(cmd);
+
+    // Reset the gazebo through
+    // ros2 service call /reset_world std_srvs/srv/Empty
   }
 };
 
