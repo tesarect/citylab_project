@@ -4,6 +4,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/subscription_base.hpp"
 #include "rclcpp/utilities.hpp"
+#include <geometry_msgs/msg/twist.hpp>
 #include <memory>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
@@ -17,34 +18,65 @@ public:
   Patrol(std::string laser_topic) : Node("patrol_bot_node") {
     subs_laser = this->create_subscription<sensor_msgs::msg::LaserScan>(
         laser_topic, 10, std::bind(&Patrol::laser_callback, this, _1));
+
+    cmd_vel_pub =
+        this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
+    timer_ =
+        this->create_wall_timer(std::chrono::milliseconds(100), // 10 Hz = 100ms
+                                std::bind(&Patrol::control_loop, this));
   }
 
 private:
+  float direction_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr subs_laser;
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub;
+  rclcpp::TimerBase::SharedPtr timer_;
 
   void laser_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
-    // Basic laser info
-    RCLCPP_INFO(this->get_logger(), "Laser data received:");
-    RCLCPP_INFO(this->get_logger(), "Number of ranges: %zu",
-                msg->ranges.size());
-    RCLCPP_INFO(this->get_logger(), "Angle min: %.2f, Angle max: %.2f",
-                msg->angle_min, msg->angle_max);
+    // Get 180° front rays
+    size_t total = msg->ranges.size();
+    size_t front_start = total / 4;
+    size_t front_end = 3 * total / 4;
 
-    // Display first few ranges
-    RCLCPP_INFO(this->get_logger(), "First 5 ranges:");
-    for (size_t i = 0; i < 5 && i < msg->ranges.size(); i++) {
-      RCLCPP_INFO(this->get_logger(), "Range[%zu]: %.2f", i, msg->ranges[i]);
+    // Find max distance in front 180° (excluding inf values)
+    float max_distance = 0.0;
+    size_t max_index = front_start;
+
+    // RCLCPP_INFO(
+    //     this->get_logger(),
+    //     "front_start : %zu | front_end : %zu | total : %zu | max_index : %zu",
+    //     front_start, front_end, total, max_index);
+
+    for (size_t i = front_start; i < front_end; i++) {
+      // Check if range is valid (not inf and not nan)
+      if (std::isfinite(msg->ranges[i]) && msg->ranges[i] > max_distance) {
+        max_distance = msg->ranges[i];
+        max_index = i;
+      }
     }
 
-    // Display middle few ranges (front area)
-    size_t middle = msg->ranges.size() / 2;
-    RCLCPP_INFO(this->get_logger(), "Middle ranges (front area):");
-    for (size_t i = middle - 2; i <= middle + 2 && i < msg->ranges.size();
-         i++) {
-      RCLCPP_INFO(this->get_logger(), "Range[%zu]: %.2f", i, msg->ranges[i]);
-    }
+    // Calculate angle of the safest direction
+    float angle_increment = msg->angle_increment;
+    float angle_min = msg->angle_min;
+    float safest_angle = angle_min + (max_index * angle_increment);
 
-    RCLCPP_INFO(this->get_logger(), "------------------------");
+    // Store in class variable
+    direction_ = safest_angle;
+
+    // Debug output
+    RCLCPP_INFO(this->get_logger(),
+                "Max distance: %.2f at index %zu, angle: %.2f", max_distance,
+                max_index, direction_);
+  }
+
+  void control_loop() {
+    auto cmd = geometry_msgs::msg::Twist();
+    cmd.linear.x = 0.1; // Always 0.1 m/s forward
+
+    // Angular velocity based on safest direction
+    cmd.angular.z = direction_ / 2;
+
+    cmd_vel_pub->publish(cmd);
   }
 };
 
