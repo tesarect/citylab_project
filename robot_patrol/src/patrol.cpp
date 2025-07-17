@@ -43,13 +43,12 @@ private:
     size_t front_end = 3 * total / 4; // Skip left 90 degree
 
     // Check obstacle in FRONT (narrow range around center)
-    size_t side_band = 29; // Small range around front
+    size_t side_band = 34; // Small range around front
     size_t center = total / 2;
     size_t front_check_start = center - side_band;
     size_t front_check_end = center + side_band;
 
     float min_front_distance = std::numeric_limits<float>::max();
-    float max_distance;
     size_t max_index;
 
     // Check for obstacle in front only
@@ -60,11 +59,16 @@ private:
       }
     }
 
+    // Case when all front rays are inf/nan
+    if (min_front_distance == std::numeric_limits<float>::max()) {
+      min_front_distance = 999.0; // Just to avoid printing huge nos on the logs
+    }
+
     // If obstacle detected in front, find safest direction in 180degree
     // detecting at 35 cm - as mentioned in the task
     float obj_detect_threshold = 0.35;
     if (min_front_distance < obj_detect_threshold) {
-      max_distance = 0.0;
+      float max_distance = 0.0;
       max_index = front_start;
 
       for (size_t i = front_start; i < front_end; i++) {
@@ -77,7 +81,7 @@ private:
       // Calculate angle from front X axis
       float angle_increment = msg->angle_increment;
       float angle_min = msg->angle_min;
-      direction_ = angle_min + (max_index * angle_increment);
+      direction_ = angle_min + (max_index * angle_increment); // Take a turn
       RCLCPP_INFO(this->get_logger(),
                   "Obstacle at %.2f! Turning to angle: %.2f",
                   min_front_distance, direction_);
