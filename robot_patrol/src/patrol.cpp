@@ -31,6 +31,7 @@ public:
 
 private:
   float direction_;
+
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr subs_laser;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub;
   rclcpp::TimerBase::SharedPtr timer_;
@@ -61,7 +62,8 @@ private:
 
     // If obstacle detected in front, find safest direction in 180degree
     // detecting at 35 cm - as mentioned in the task
-    if (min_front_distance < 0.35) {
+    float obj_detect_threshold = 0.35;
+    if (min_front_distance < obj_detect_threshold) {
       max_distance = 0.0;
       max_index = front_start;
 
@@ -88,6 +90,7 @@ private:
 
   void control_loop() {
     auto cmd = geometry_msgs::msg::Twist();
+
     cmd.linear.x = 0.1; // Always 0.1 m/s forward
 
     // Angular velocity based on safest direction
