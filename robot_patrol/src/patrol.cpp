@@ -42,7 +42,7 @@ private:
     size_t front_end = 3 * total / 4; // Skip left 90 degree
 
     // Check obstacle in FRONT (narrow range around center)
-    size_t side_band = 28; // Small range around front
+    size_t side_band = 29; // Small range around front
     size_t center = total / 2;
     size_t front_check_start = center - side_band;
     size_t front_check_end = center + side_band;
@@ -95,7 +95,7 @@ private:
 
     cmd_vel_pub->publish(cmd);
 
-    // Reset the gazebo through
+    // Reset the gazebo through cmd if it goes crazy
     // ros2 service call /reset_world std_srvs/srv/Empty
   }
 };
