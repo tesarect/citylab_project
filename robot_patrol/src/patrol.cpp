@@ -5,6 +5,7 @@
 #include "rclcpp/subscription_base.hpp"
 #include "rclcpp/utilities.hpp"
 #include <chrono>
+#include <cstddef>
 #include <geometry_msgs/msg/twist.hpp>
 #include <limits>
 #include <memory>
@@ -35,54 +36,54 @@ private:
   rclcpp::TimerBase::SharedPtr timer_;
 
   void laser_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
-    // Get 180° front rays
+    // Get 180degree front rays
     size_t total = msg->ranges.size();
     size_t front_start = total / 4;   // Skip right 90 degree
     size_t front_end = 3 * total / 4; // Skip left 90 degree
 
-    // Find max distance in front 180° (excluding inf values)
-    float max_distance = 0.0;
-    size_t max_index = front_start;
+    // Check obstacle in FRONT (narrow range around center)
+    size_t side_band = 28; // Small range around front
+    size_t center = total / 2;
+    size_t front_check_start = center - side_band;
+    size_t front_check_end = center + side_band;
 
-    // Find min distance in front area (for obstacle detection)
     float min_front_distance = std::numeric_limits<float>::max();
+    float max_distance;
+    size_t max_index;
 
-    for (size_t i = front_start; i < front_end; i++) {
-      // Check for minimum distance (obstacle detection)
+    // Check for obstacle in front only
+    for (size_t i = front_check_start; i < front_check_end; i++) {
       if (std::isfinite(msg->ranges[i]) &&
           msg->ranges[i] < min_front_distance) {
         min_front_distance = msg->ranges[i];
       }
-
-      // Check for maximum distance (safest direction)
-      if (std::isfinite(msg->ranges[i]) && msg->ranges[i] > max_distance) {
-        max_distance = msg->ranges[i];
-        max_index = i;
-      }
     }
 
-    // // Calculate angle of the safest direction
-    // float angle_increment = msg->angle_increment;
-    // float angle_min = msg->angle_min;
-    // float safest_angle = angle_min + (max_index * angle_increment);
-
-    // // Store in class variable
-    // direction_ = safest_angle;
-
-    // Obstacle avoidance logic
+    // If obstacle detected in front, find safest direction in 180degree
+    // detecting at 35 cm - as mentioned in the task
     if (min_front_distance < 0.35) {
-      // Use safest direction - calculate angle
+      max_distance = 0.0;
+      max_index = front_start;
+
+      for (size_t i = front_start; i < front_end; i++) {
+        if (std::isfinite(msg->ranges[i]) && msg->ranges[i] > max_distance) {
+          max_distance = msg->ranges[i];
+          max_index = i;
+        }
+      }
+
+      // Calculate angle from front X axis
       float angle_increment = msg->angle_increment;
       float angle_min = msg->angle_min;
       direction_ = angle_min + (max_index * angle_increment);
+      RCLCPP_INFO(this->get_logger(),
+                  "Obstacle at %.2f! Turning to angle: %.2f",
+                  min_front_distance, direction_);
     } else {
       direction_ = 0.0; // Go straight
+      RCLCPP_INFO(this->get_logger(), "Path clear (%.2f), going straight",
+                  min_front_distance);
     }
-
-    // Debug output
-    RCLCPP_INFO(this->get_logger(),
-                "Max distance: %.2f at index %zu, angle: %.2f", max_distance,
-                max_index, direction_);
   }
 
   void control_loop() {
