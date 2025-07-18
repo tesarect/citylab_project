@@ -43,7 +43,7 @@ private:
     size_t front_end = 3 * total / 4; // Skip left 90 degree
 
     // Check obstacle in FRONT (narrow range around center)
-    size_t side_band = 34; // Small range around front
+    size_t side_band = 39; // Small range around front
     size_t center = total / 2;
     size_t front_check_start = center - side_band;
     size_t front_check_end = center + side_band;
@@ -51,7 +51,7 @@ private:
     float min_front_distance = std::numeric_limits<float>::max();
     size_t max_index;
 
-    // Check for obstacle in front only
+    // Front collision tetection
     for (size_t i = front_check_start; i < front_check_end; i++) {
       if (std::isfinite(msg->ranges[i]) &&
           msg->ranges[i] < min_front_distance) {
@@ -81,6 +81,22 @@ private:
       // Calculate angle from front X axis
       float angle_increment = msg->angle_increment;
       float angle_min = msg->angle_min;
+
+      float base_angle = angle_min + (max_index * angle_increment);
+      // Just for testing -  Boost the turn based on how close the obstacle is
+      float boost_factor = 1.0;
+      if (min_front_distance < 0.25) {        // Very close
+        boost_factor = 2.0;                   // Double the turn
+      } else if (min_front_distance < 0.30) { // Close
+        boost_factor = 1.5;                   // 50% more turn
+      }
+      direction_ = base_angle * boost_factor; // Apply boost
+
+      RCLCPP_INFO(this->get_logger(),
+                  "Obstacle at %.2f! Base angle: %.2f, Boosted angle: %.2f "
+                  "(factor: %.1f)",
+                  min_front_distance, base_angle, direction_, boost_factor);
+
       direction_ = angle_min + (max_index * angle_increment); // Take a turn
       RCLCPP_INFO(this->get_logger(),
                   "Obstacle at %.2f! Turning to angle: %.2f",
@@ -89,6 +105,33 @@ private:
       direction_ = 0.0; // Go straight
       RCLCPP_INFO(this->get_logger(), "Path clear (%.2f), going straight",
                   min_front_distance);
+    }
+
+    // Side collision detection - 30 degrees on either sides
+    size_t left_ray = center + (total / 12);
+    size_t right_ray = center - (total / 12);
+
+    float side_collision_threshold = 0.20; // distance close to the sides
+    float left_distance = msg->ranges[left_ray];
+    float right_distance = msg->ranges[right_ray];
+
+    // Side collision avoidance
+    if (std::isfinite(left_distance) &&
+        left_distance < side_collision_threshold) {
+      direction_ = -0.5; // Turn right (negative angle)
+      RCLCPP_WARN(this->get_logger(),
+                  "LEFT COLLISION! Distance: %.2f, turning right",
+                  left_distance);
+      return;
+    }
+
+    if (std::isfinite(right_distance) &&
+        right_distance < side_collision_threshold) {
+      direction_ = 0.5; // Turn left (positive angle)
+      RCLCPP_WARN(this->get_logger(),
+                  "RIGHT COLLISION! Distance: %.2f, turning left",
+                  right_distance);
+      return;
     }
   }
 
@@ -104,6 +147,7 @@ private:
 
     // Reset the gazebo through cmd if it goes crazy
     // ros2 service call /reset_world std_srvs/srv/Empty
+    // ros2 run teleop_twist_keyboard teleop_twist_keyboard
   }
 };
 
