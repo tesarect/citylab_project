@@ -51,7 +51,7 @@ private:
     float min_front_distance = std::numeric_limits<float>::max();
     size_t max_index;
 
-    // Front collision tetection
+    // Front collision detection
     for (size_t i = front_check_start; i < front_check_end; i++) {
       if (std::isfinite(msg->ranges[i]) &&
           msg->ranges[i] < min_front_distance) {
@@ -62,6 +62,33 @@ private:
     // Case when all front rays are inf/nan
     if (min_front_distance == std::numeric_limits<float>::max()) {
       min_front_distance = 999.0; // Just to avoid printing huge nos on the logs
+    }
+
+    // Side collision detection - 30 degrees on either sides
+    size_t left_ray = center + (total / 12);
+    size_t right_ray = center - (total / 12);
+
+    float side_collision_threshold = 0.20; // distance close to the sides
+    float left_distance = msg->ranges[left_ray];
+    float right_distance = msg->ranges[right_ray];
+
+    // Side collision avoidance (emergency override)
+    if (std::isfinite(left_distance) &&
+        left_distance < side_collision_threshold) {
+      direction_ = -0.5; // Turn right (negative angle)
+      RCLCPP_WARN(this->get_logger(),
+                  "LEFT COLLISION! Distance: %.2f, turning right",
+                  left_distance);
+      return;
+    }
+
+    if (std::isfinite(right_distance) &&
+        right_distance < side_collision_threshold) {
+      direction_ = 0.5; // Turn left (positive angle)
+      RCLCPP_WARN(this->get_logger(),
+                  "RIGHT COLLISION! Distance: %.2f, turning left",
+                  right_distance);
+      return;
     }
 
     // If obstacle detected in front, find safest direction in 180degree
@@ -81,57 +108,53 @@ private:
       // Calculate angle from front X axis
       float angle_increment = msg->angle_increment;
       float angle_min = msg->angle_min;
-
       float base_angle = angle_min + (max_index * angle_increment);
-      // Just for testing -  Boost the turn based on how close the obstacle is
-      float boost_factor = 1.0;
-      if (min_front_distance < 0.25) {        // Very close
-        boost_factor = 2.0;                   // Double the turn
-      } else if (min_front_distance < 0.30) { // Close
-        boost_factor = 1.5;                   // 50% more turn
+
+      // Corner detection
+      bool is_corner = false;
+      size_t corner_check_range = 15; // Check wider range around safest ray
+
+      // Check if safest direction is actually blocked (corner detection)
+      size_t check_start =
+          (max_index > corner_check_range) ? max_index - corner_check_range : 0;
+      size_t check_end = std::min(max_index + corner_check_range, front_end);
+
+      int blocked_rays = 0;
+      for (size_t i = check_start; i < check_end; i++) {
+        if (std::isfinite(msg->ranges[i]) &&
+            msg->ranges[i] < 0.5) { // 50cm threshold
+          blocked_rays++;
+        }
       }
-      direction_ = base_angle * boost_factor; // Apply boost
 
-      RCLCPP_INFO(this->get_logger(),
-                  "Obstacle at %.2f! Base angle: %.2f, Boosted angle: %.2f "
-                  "(factor: %.1f)",
-                  min_front_distance, base_angle, direction_, boost_factor);
+      // If too many rays around "safest" direction are blocked, it's a corner
+      if (blocked_rays > corner_check_range) {
+        is_corner = true;
+        // Force turn away from corner (pick opposite side)
+        direction_ = (max_index < center) ? 1.0 : -1.0; // Hard left/right turn
+        RCLCPP_WARN(this->get_logger(), "CORNER DETECTED! Forced turn: %.2f",
+                    direction_);
+      } else {
+        // Normal obstacle avoidance with boost
+        float boost_factor = 1.0;
+        if (min_front_distance < 0.25) { // Very close
+          //   boost_factor = 2.0;                   // Double the turn
+          boost_factor = 1.5;                   // Double the turn
+        } else if (min_front_distance < 0.30) { // Close
+          //   boost_factor = 1.5;                   // 50% more turn
+          boost_factor = 1.0; // 50% more turn
+        }
+        direction_ = base_angle * boost_factor; // Apply boost
 
-      direction_ = angle_min + (max_index * angle_increment); // Take a turn
-      RCLCPP_INFO(this->get_logger(),
-                  "Obstacle at %.2f! Turning to angle: %.2f",
-                  min_front_distance, direction_);
+        RCLCPP_INFO(this->get_logger(),
+                    "Obstacle at %.2f! Base angle: %.2f, Boosted angle: %.2f "
+                    "(factor: %.1f)",
+                    min_front_distance, base_angle, direction_, boost_factor);
+      }
     } else {
       direction_ = 0.0; // Go straight
       RCLCPP_INFO(this->get_logger(), "Path clear (%.2f), going straight",
                   min_front_distance);
-    }
-
-    // Side collision detection - 30 degrees on either sides
-    size_t left_ray = center + (total / 12);
-    size_t right_ray = center - (total / 12);
-
-    float side_collision_threshold = 0.20; // distance close to the sides
-    float left_distance = msg->ranges[left_ray];
-    float right_distance = msg->ranges[right_ray];
-
-    // Side collision avoidance
-    if (std::isfinite(left_distance) &&
-        left_distance < side_collision_threshold) {
-      direction_ = -0.5; // Turn right (negative angle)
-      RCLCPP_WARN(this->get_logger(),
-                  "LEFT COLLISION! Distance: %.2f, turning right",
-                  left_distance);
-      return;
-    }
-
-    if (std::isfinite(right_distance) &&
-        right_distance < side_collision_threshold) {
-      direction_ = 0.5; // Turn left (positive angle)
-      RCLCPP_WARN(this->get_logger(),
-                  "RIGHT COLLISION! Distance: %.2f, turning left",
-                  right_distance);
-      return;
     }
   }
 
@@ -144,10 +167,6 @@ private:
     cmd.angular.z = direction_ / 2;
 
     cmd_vel_pub->publish(cmd);
-
-    // Reset the gazebo through cmd if it goes crazy
-    // ros2 service call /reset_world std_srvs/srv/Empty
-    // ros2 run teleop_twist_keyboard teleop_twist_keyboard
   }
 };
 
@@ -158,8 +177,6 @@ int main(int argc, char *argv[]) {
       std::make_shared<Patrol>(laser_scn_topic);
 
   RCLCPP_INFO(patrol_node->get_logger(), "Patrol Node INFO...");
-
-  //   rclcpp::spin(patrol_node);
 
   rclcpp::executors::MultiThreadedExecutor executor;
   executor.add_node(patrol_node);
